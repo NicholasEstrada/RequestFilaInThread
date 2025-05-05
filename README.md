@@ -1,98 +1,112 @@
-📘 Documentação da Fila de Execução de Threads
-🔧 Arquitetura Geral
-Este sistema implementa uma fila de execução de tarefas assíncronas utilizando ThreadPoolExecutor configurado como um ExecutorService Spring Bean. A fila processa requisições que são submetidas via endpoint REST (/thread/start), garantindo controle de concorrência e limitação de execução paralela.
 
-🧵 Como Funciona a Fila de Execução
-1. Componente de Execução: ThreadPoolExecutor
-java
-Copiar
-Editar
+# 📘 Documentação Técnica – Fila de Execução de Threads
+
+## 🔧 Arquitetura Geral
+
+Este sistema implementa uma **fila de execução de tarefas assíncronas** utilizando `ThreadPoolExecutor` configurado como um `ExecutorService` Bean no Spring. As requisições são processadas de forma concorrente, com controle de fila e política de rejeição quando a fila está cheia.
+
+---
+
+## 🧵 Funcionamento da Fila de Execução
+
+### 1. Configuração do Executor
+
+```java
 int maxThread = 2;
 int filaMax = 100;
-maxThread = 2: Define o número máximo de threads que podem executar tarefas simultaneamente.
 
-filaMax = 100: Define a capacidade da fila de espera de tarefas antes de serem executadas.
+return new ThreadPoolExecutor(
+    maxThread,
+    maxThread,
+    0L, TimeUnit.MICROSECONDS,
+    new LinkedBlockingDeque<>(filaMax),
+    new ThreadPoolExecutor.AbortPolicy()
+);
+```
 
-RejectPolicy: A política AbortPolicy irá rejeitar novas tarefas lançando uma RejectedExecutionException caso a fila esteja cheia.
+- `maxThread = 2`: Número máximo de threads simultâneas.
+- `filaMax = 100`: Número máximo de tarefas aguardando execução.
+- `AbortPolicy`: Rejeita novas tarefas se a fila estiver cheia.
 
-2. Caminho da Requisição
-O usuário envia um POST /thread/start com um objeto RequestObjectDTO.
+---
 
-O controller (ThreadController) chama executorService.submit(...), passando uma instância de ServiceExecutor.
+### 2. Fluxo da Requisição
 
-ServiceExecutor implementa Runnable e chama requestService.start(...), que:
+1. O cliente envia um `POST /thread/start` com `RequestObjectDTO`.
+2. O `ThreadController` submete a tarefa ao `ExecutorService`.
+3. `ServiceExecutor` implementa `Runnable` e chama `requestService.start(...)`.
+4. `RequestService` simula o processamento com `Thread.sleep(10000)` e imprime logs de entrada e saída.
 
-Imprime início e fim do processamento.
+---
 
-Simula uma tarefa longa com Thread.sleep(10000) (10 segundos).
+## ✅ Como Testar a Fila de Execução
 
-3. Fila de Execução
-Até 2 tarefas são processadas simultaneamente.
+### 🔄 Teste 1: Execução Concorrente e Fila
 
-As tarefas subsequentes entram na fila de espera (até 100).
+**Ferramentas sugeridas:** Postman, cURL, Apache JMeter
 
-Se a fila estiver cheia: RejectedExecutionException → retorna HTTP 429.
+1. Envie **várias requisições simultâneas** para `POST /thread/start`.
+2. Observe:
+   - 2 tarefas serão executadas imediatamente.
+   - As demais entrarão na fila (até 100).
+   - A partir da 103ª requisição, retornará HTTP `429 Too Many Requests`.
 
-✅ Como Testar o Funcionamento da Fila
-🔄 Teste 1: Execução Paralela e Fila
-Ferramentas Sugeridas:
-Postman, cURL ou Apache JMeter
+**Exemplo com cURL:**
+```bash
+curl -X POST http://localhost:8080/thread/start      -H "Content-Type: application/json"      -d '{"campo1":"valor1"}'
+```
 
-Etapas:
-Faça 3 ou mais requisições simultâneas para POST /thread/start.
+Execute múltiplas vezes rapidamente (use `for` no shell, se preferir).
 
-Observe:
+---
 
-As 2 primeiras começam a ser processadas imediatamente (execução concorrente).
+### 🔍 Teste 2: Estourar a Capacidade da Fila
 
-A 3ª entra na fila (executada após uma das 2 primeiras terminar).
+1. Modifique temporariamente:
+   ```java
+   int maxThread = 2;
+   int filaMax = 3;
+   ```
+2. Envie **6 requisições simultâneas**.
+3. Esperado:
+   - 2 executam.
+   - 3 ficam na fila.
+   - 1 é rejeitada e retorna erro HTTP `429`.
 
-A partir da 104ª requisição simultânea, a API deve começar a retornar erro 429.
+---
 
-Exemplo via curl:
-bash
-Copiar
-Editar
-curl -X POST http://localhost:8080/thread/start \
-     -H "Content-Type: application/json" \
-     -d '{"campo1":"valor1"}'
-Execute isso várias vezes rapidamente (use shell loop para automatizar).
+## 📊 Logs Esperados
 
-🔍 Teste 2: Limite de Fila
-Configure maxThread = 2 e filaMax = 3 temporariamente para facilitar teste.
-
-Envie 6 requisições simultâneas.
-
-Observe:
-
-2 executam.
-
-3 entram na fila.
-
-1 deve ser rejeitada (RejectedExecutionException).
-
-🧪 Logs Esperados
-plaintext
-Copiar
-Editar
+```plaintext
 IN EXECUCAO: 2025-05-04T14:12:01.123Z
 RequestObjectDTO: RequestObjectDTO{...}
-...
 OUT EXECUCAO: 2025-05-04T14:12:11.123Z
-Isso ajuda a rastrear o tempo de execução de cada tarefa.
+```
 
-📊 Métricas que você pode adicionar (opcional)
-Para monitoramento da fila:
+Esses logs indicam início e fim da execução da tarefa.
 
-java
-Copiar
-Editar
+---
+
+## 📈 Monitoramento da Fila (opcional)
+
+Inclua este trecho no controller ou service para depurar:
+
+```java
 ThreadPoolExecutor executor = (ThreadPoolExecutor) executorService;
 System.out.println("Tarefas ativas: " + executor.getActiveCount());
 System.out.println("Na fila: " + executor.getQueue().size());
-🧼 Boas práticas recomendadas
-Utilize monitoramento com Actuator (/actuator/metrics) se quiser métricas automáticas.
+```
 
-Considere usar CallerRunsPolicy se preferir não rejeitar requisições.
+---
 
-Use logs estruturados com SLF4J e Logback para ambientes produtivos.
+## ✅ Boas Práticas
+
+- Use o Spring Boot Actuator (`/actuator/metrics`) para monitoramento avançado.
+- Considere outras políticas de rejeição como `CallerRunsPolicy` se preferir evitar falhas.
+- Use logs estruturados com SLF4J e Logback para produção.
+
+---
+
+## 📌 Conclusão
+
+Este sistema permite o gerenciamento eficiente de execução de tarefas em segundo plano, com controle de concorrência, capacidade de fila e rejeição segura de requisições quando a fila está cheia.
